@@ -52,6 +52,18 @@ export function takeUntil<R2, E2>(until: T.Effect<R2, E2, any>) {
 function fromIO<T>(io: IO<T>) {
   return T.sync(() => io());
 }
+
+// Emitter
+
+const emitterURI = Symbol()
+
+interface Emitter {
+  [emitterURI]: {
+    addEventListener: (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => T.Effect<T.NoEnv, never, void>;
+    removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => T.Effect<T.NoEnv, never, void>;
+  }
+}
+
 // Canvas
 const canvasUri = Symbol();
 
@@ -59,6 +71,11 @@ interface Canvas {
   [canvasUri]: CanvasRenderingContext2D;
 }
 
+/**
+ * circle :: number -> number -> number -> Effect Canvas never (number, number, number)
+ * 
+ * Draws a circle on the canvas. X, y, and radius are returned again.
+ */
 const circle = (x: number, y: number, r: number) =>
   T.accessM((_: Canvas) =>
     T.sync(() => {
@@ -69,6 +86,11 @@ const circle = (x: number, y: number, r: number) =>
     })
   );
 
+/**
+ * clear :: T.Effect Canvas never void
+ * 
+ * Clears a canvas
+ */
 const clear = T.accessM((_: Canvas) =>
   T.sync(() => {
     _[canvasUri].clearRect(
@@ -80,6 +102,12 @@ const clear = T.accessM((_: Canvas) =>
   })
 );
 
+/**
+ * waitForKeyPress :: number -> Effect NoEnv never void
+ * 
+ * Given a keyCode returns an effect that resolves once the user
+ * presses a key on the keyboard matching the key code.
+ */
 const waitForKeyPress = (keyCode: number): T.Effect<T.NoEnv, never, void> =>
   T.async<never, void>((r) => {
     const onKeyUp = (e: KeyboardEvent) => {
@@ -98,50 +126,76 @@ const waitForKeyPress = (keyCode: number): T.Effect<T.NoEnv, never, void> =>
   });
 
 const drawCirclesOnClick = pipe(
+  // Read canvas element from environment
   T.accessM((_: Canvas) => T.pure(_[canvasUri].canvas)),
+  // Turn it into a  stream
   S.encaseEffect,
+  // Flat map the 1 element stream containing the canvas element to a stream of mouse clicks
   S.chain((canvasEl) =>
     encaseObservable(fromEvent<MouseEvent>(canvasEl, "click"), constVoid)
   ),
+  // Take mouse clicks until the user presses d or D
   takeUntil(waitForKeyPress(68)),
+  // Map the mouse event to it's coordinates
   S.map((e) => tuple(e.offsetX, e.offsetY)),
+  // Flat map the stream of coordinates to
+  /// a stream that draws a circle
   S.chain(([x, y]) =>
     pipe(
+      // Get a random radius for the circle to draw
       Rnd.randomInt(30, 200),
+      // Convert IO to Effect
       fromIO,
+      // Map effect that produces a random int to an effect that draws a circle
       T.chain((r) => circle(x, y, r)),
+      // Turn the effect into a stream
       S.encaseEffect
     )
   ),
+  // Turn the stream producing x, y, and radius into
+  // a stream producing x, y, radius, and the timestamp the circle was drawn
   S.chain(([x, y, r]) =>
     S.encaseEffect(
       fromIO(
         pipe(
-          D.now,
+          // Get the timestamp
+          D.now, // IO<number>
+          // Map it to a tuple of x, y, radius, and date
           IO.map((date) => tuple(x, y, r, date))
         )
       )
     )
   ),
+  // Turn stream into an effect of an array of values
   S.collectArray,
   T.chain((output) => T.as(log("Done drawing!"), output))
 );
 
 const programC = Do(T.effect)
+  // Let the user draw circles until they press d or D
   .bind("circles", drawCirclesOnClick)
+  // Wait for the user to press r or R (replay)
   .do(waitForKeyPress(82))
   .do(log("Replaying.."))
+  // Clear the canvas
   .do(clear)
   .doL(
+    // Flat map the list of circle coordinates and dates to
+    // a program that redraws the circles in the same amount of time
     flow(dot("circles"), (circles) =>
       circles
         .reduce((acc, next, index) => {
+          // Determin the number of milliseconds the program should
+          // delay drawing the next circle based on the previous
+          // circle's timestamp.
           const prev = circles[index - 1];
           const ms = prev ? next[3] - prev[3] : 0;
-          console.log(ms);
+          
+          // Create an effect that redraws the circle after a delay
           acc.push(T.delay(circle(next[0], next[1], next[2]), ms));
           return acc;
         }, [] as Array<ReturnType<typeof circle>>)
+        // Turn the list of effects into a single chained effect (andThen)
         .reduce((a, b) =>
           pipe(
             a,
@@ -174,11 +228,15 @@ function App() {
 
       if (ctx) {
         const program: T.Effect<Canvas & Console, never, void> = Do(T.effect)
+          // Spawn a program that allows the user to draw circles and replay their drawing
           .bind("fiber", T.fork(programC))
+          // Wait for the user to press x or X to cancel
           .do(waitForKeyPress(88))
+          // Interrupt the fiber
           .doL(({ fiber }) => fiber.interrupt)
-          .doL(dot2("fiber", "interrupt"))
+          // Clear the canvas
           .do(clear)
+          // Reboot
           .doL(() => program)
           .return(constVoid);
 
