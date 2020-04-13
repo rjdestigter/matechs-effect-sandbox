@@ -146,7 +146,7 @@ const circles2effects = (timestampedCircles: TimeStamped[]) =>
  * ```
  */
 const redrawCircles = (circles: TimeStamped[]) => {
-  const p1 = Do(T.effect)
+  const redraw = Do(T.effect)
     // Wait for the user to press r or R (replay)
     // .do(Emitter.waitForKeyPress(82))
     .do(log("Replaying..."))
@@ -157,11 +157,12 @@ const redrawCircles = (circles: TimeStamped[]) => {
       // a program that redraws the circles in the same amount of time
       circles2effects(circles)
     )
+    .do(T.never)
     .return(constVoid);
 
     return T.zip(
         Emitter.waitForKeyPress(82),
-        T.forever(T.race(Emitter.waitForKeyPress(82), p1))
+        T.forever(T.race(Emitter.waitForKeyPress(82), redraw))
     )
     
 };
