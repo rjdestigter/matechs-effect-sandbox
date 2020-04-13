@@ -1,3 +1,5 @@
+import "./App.scss";
+
 import { effect as T, stream as S, managed as M } from "@matechs/effect";
 import { log, Console, provideConsole } from "@matechs/console";
 import * as E from "fp-ts/lib/Either";
@@ -8,7 +10,6 @@ import * as O from "fp-ts/lib/Option";
 import * as IO from "fp-ts/lib/IO";
 
 import React from "react";
-import "./App.scss";
 import { pipe } from "fp-ts/lib/pipeable";
 // import { fromEvent } from "rxjs";
 // import { encaseObservable } from "@matechs/rxjs";
@@ -69,30 +70,29 @@ function fromIO<T>(io: IO<T>) {
 
 const emitterURI = Symbol();
 
-type EventFor<TEventType extends string> = TEventType extends "keypress" | "keyup" | "keydown"
-? KeyboardEvent
-: TEventType extends "click" | "dblclick"
-? MouseEvent
-: Event
+type EventFor<TEventType extends string> = TEventType extends
+  | "keypress"
+  | "keyup"
+  | "keydown"
+  ? KeyboardEvent
+  : TEventType extends "click" | "dblclick"
+  ? MouseEvent
+  : Event;
 
 type EventHandler<TEventType extends string> = (
   evt: EventFor<TEventType>
-) => void
+) => void;
 
 interface Emitter {
   [emitterURI]: {
     fromEvent: <TEventType extends string>(
       type: TEventType
-    ) => (
-      cb: EventHandler<TEventType>
-    ) => T.Effect<T.NoEnv, never, void>;
+    ) => (cb: EventHandler<TEventType>) => T.Effect<T.NoEnv, never, void>;
     addEventListener: <THTMLElement extends HTMLElement>(
       el: THTMLElement
     ) => <TEventType extends string>(
       type: TEventType
-    ) => (
-      cb: EventHandler<TEventType>
-    ) => T.Effect<T.NoEnv, never, void>;
+    ) => (cb: EventHandler<TEventType>) => T.Effect<T.NoEnv, never, void>;
   };
 }
 
@@ -142,9 +142,7 @@ const emitterLive: Emitter = {
       TEventType extends string
     >(
       type: TEventType
-    ) => (
-      cb: EventHandler<TEventType>
-    ) => {
+    ) => (cb: EventHandler<TEventType>) => {
       el.addEventListener(type, cb as any);
 
       return T.sync(() => el.removeEventListener(type, cb as any));
@@ -175,8 +173,16 @@ const circle = (x: number, y: number, r: number, sa?: number, ea?: number) =>
       ),
       T.chain(([sa, ea]) =>
         T.sync(() => {
-          _[canvasUri].strokeStyle = `rgb(${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()})`
-          _[canvasUri].fillStyle = `rgba(${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 100)() / 100})`
+          _[canvasUri].strokeStyle = `rgb(${Rnd.randomInt(
+            0,
+            255
+          )()}, ${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()})`;
+          _[canvasUri].fillStyle = `rgba(${Rnd.randomInt(
+            0,
+            255
+          )()}, ${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()}, ${
+            Rnd.randomInt(0, 100)() / 100
+          })`;
           _[canvasUri].lineWidth = 2;
           _[canvasUri].beginPath();
           _[canvasUri].arc(x, y, r, sa, ea / 1000);
@@ -210,12 +216,13 @@ const clear = T.accessM((_: Canvas) =>
  * Given a keyCode returns an effect that resolves once the user
  * presses a key on the keyboard matching the key code.
  */
-const waitForKeyPress = (keyCode: number) => pipe(
-  subscribe('keyup'),
-  S.filter(event => event.keyCode === keyCode),
-  S.takeWhile(constant(false)),
-  S.drain
-)
+const waitForKeyPress = (keyCode: number) =>
+  pipe(
+    subscribe("keyup"),
+    S.filter((event) => event.keyCode === keyCode),
+    S.takeWhile(constant(false)),
+    S.drain
+  );
 
 const clicker = pipe(
   subscribe("click"),
@@ -302,7 +309,7 @@ const programC = Do(T.effect)
               // delay drawing the next circle based on the previous
               // circle's timestamp.
               const prev = circles[index - 1];
-              const ms = prev ? next[3] - prev[3] : 0;
+              const ms = prev ? (next[5] - prev[5]) / 2 : 0;
 
               // Create an effect that redraws the circle after a delay
               acc.push(
@@ -331,6 +338,7 @@ function App() {
   React.useEffect(() => {
     setTimeout(() => {
       if (ref.current && ref.current.parentElement) {
+        console.log(ref.current.parentElement.getBoundingClientRect());
         const {
           width,
           height,
@@ -372,8 +380,28 @@ function App() {
   }, []);
 
   return (
-    <div className="App">
-      <canvas height={height} width={width} ref={ref}></canvas>
+    <div id="app">
+      <section>
+        <canvas height={height} width={width} ref={ref}></canvas>
+      </section>
+      <footer>
+        <ul>
+          <li>
+            Press <i>x</i> to reset.
+          </li>
+          <li>
+            Press <i>d</i> to commit.
+          </li>
+          <li>
+            Press <i>r</i> to replay <i>(after commiting.)</i>.
+          </li>
+        </ul>
+        <p>
+          You can redraw as many times as you want after committing. Size and
+          coordinates are preserved. Colours are not. Redrawing happens at twice
+          the speed you drew.
+        </p>
+      </footer>
     </div>
   );
 }

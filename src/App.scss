@@ -1,6 +1,42 @@
 html,
 body,
-#root,
-.App {
+#root, #root>#app {
   height: 100%;
+  overflow: hidden;
+}
+
+* {
+  padding: 0;
+  margin: 0;
+  position: relative;
+}
+
+#root {
+  #app {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    >section {
+      flex: 1 1 auto;
+    }
+
+    >footer {
+      flex: 0 0 auto;
+      padding: 15px;
+      color: #fff;
+      background: #000;
+      box-sizing: border-box;
+      font-size: 0.8em;
+
+      ul {
+        padding-left: 15px;
+        margin-bottom: 15px;
+      }
+
+      p {
+        font-size: 0.9em;
+      }
+    }
+  }
 }

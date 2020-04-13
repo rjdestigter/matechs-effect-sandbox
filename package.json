@@ -2,6 +2,8 @@
   "name": "matechs-canvas",
   "version": "0.1.0",
   "private": true,
+  "repository": "http://rjdestigter.github.io/matechs-effect-sandbox",
+  "homepage": "http://rjdestigter.github.io/matechs-effect-sandbox",
   "dependencies": {
     "@matechs/console": "^3.0.31",
     "@matechs/effect": "^5.0.26",
@@ -15,6 +17,7 @@
     "@types/react-dom": "^16.9.0",
     "fp-ts": "^2.5.3",
     "fp-ts-contrib": "^0.1.15",
+    "gh-pages": "^2.2.0",
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
     "react-scripts": "3.4.1",
@@ -27,7 +30,9 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d build"
   },
   "eslintConfig": {
     "extends": "react-app"
