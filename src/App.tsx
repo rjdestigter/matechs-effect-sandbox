@@ -10,13 +10,12 @@ import * as IO from "fp-ts/lib/IO";
 import React from "react";
 import "./App.scss";
 import { pipe } from "fp-ts/lib/pipeable";
-import { fromEvent } from "rxjs";
-import { encaseObservable } from "@matechs/rxjs";
+// import { fromEvent } from "rxjs";
+// import { encaseObservable } from "@matechs/rxjs";
 import { constVoid, constant, flow } from "fp-ts/lib/function";
 import { Do } from "fp-ts-contrib/lib/Do";
 import { dot2, dot } from "./utils/getter";
 import { fst, snd } from "fp-ts/lib/ReadonlyTuple";
-import { result } from "@matechs/effect/lib/effect";
 
 type IO<A> = IO.IO<A>;
 
@@ -70,18 +69,38 @@ function fromIO<T>(io: IO<T>) {
 
 const emitterURI = Symbol();
 
+type EventFor<TEventType extends string> = TEventType extends "keypress" | "keyup" | "keydown"
+? KeyboardEvent
+: TEventType extends "click" | "dblclick"
+? MouseEvent
+: Event
+
+type EventHandler<TEventType extends string> = (
+  evt: EventFor<TEventType>
+) => void
+
 interface Emitter {
   [emitterURI]: {
     fromEvent: <TEventType extends string>(
       type: TEventType
     ) => (
-      cb: (evt: TEventType extends "click" ? MouseEvent : Event) => void
+      cb: EventHandler<TEventType>
+    ) => T.Effect<T.NoEnv, never, void>;
+    addEventListener: <THTMLElement extends HTMLElement>(
+      el: THTMLElement
+    ) => <TEventType extends string>(
+      type: TEventType
+    ) => (
+      cb: EventHandler<TEventType>
     ) => T.Effect<T.NoEnv, never, void>;
   };
 }
 
 // Events
-export function subscribe<TEventType extends string>(type: TEventType) {
+export function subscribe<
+  TEventType extends string,
+  THTMLElement extends HTMLElement
+>(type: TEventType, el?: THTMLElement) {
   return S.fromSource(
     M.managed.chain(
       M.bracket(
@@ -89,13 +108,15 @@ export function subscribe<TEventType extends string>(type: TEventType) {
           T.sync(() => {
             const { next, ops, hasCB } = S.su.queueUtils<
               never,
-              TEventType extends "click" ? MouseEvent : Event
+              EventFor<TEventType>
             >();
 
+            const fn = el
+              ? _[emitterURI].addEventListener(el)
+              : _[emitterURI].fromEvent;
+
             return {
-              unsubscribe: _[emitterURI].fromEvent(type)((a) =>
-                next({ _tag: "offer", a })
-              ),
+              unsubscribe: fn(type)((a) => next({ _tag: "offer", a })),
               ops,
               hasCB,
             };
@@ -108,14 +129,25 @@ export function subscribe<TEventType extends string>(type: TEventType) {
   );
 }
 
-const documentEmitterLive: Emitter = {
+const emitterLive: Emitter = {
   [emitterURI]: {
     fromEvent: <TEventType extends string>(type: TEventType) => (
-      cb: (evt: TEventType extends "click" ? MouseEvent : Event) => void
+      cb: EventHandler<TEventType>
     ) => {
       document.addEventListener(type, cb as any);
 
       return T.sync(() => document.removeEventListener(type, cb as any));
+    },
+    addEventListener: <THTMLElement extends HTMLElement>(el: THTMLElement) => <
+      TEventType extends string
+    >(
+      type: TEventType
+    ) => (
+      cb: EventHandler<TEventType>
+    ) => {
+      el.addEventListener(type, cb as any);
+
+      return T.sync(() => el.removeEventListener(type, cb as any));
     },
   },
 };
@@ -143,9 +175,13 @@ const circle = (x: number, y: number, r: number, sa?: number, ea?: number) =>
       ),
       T.chain(([sa, ea]) =>
         T.sync(() => {
+          _[canvasUri].strokeStyle = `rgb(${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()})`
+          _[canvasUri].fillStyle = `rgba(${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 255)()}, ${Rnd.randomInt(0, 100)() / 100})`
+          _[canvasUri].lineWidth = 2;
           _[canvasUri].beginPath();
           _[canvasUri].arc(x, y, r, sa, ea / 1000);
           _[canvasUri].stroke();
+          _[canvasUri].fill();
           return tuple(x, y, r, sa, ea);
         })
       )
@@ -174,22 +210,12 @@ const clear = T.accessM((_: Canvas) =>
  * Given a keyCode returns an effect that resolves once the user
  * presses a key on the keyboard matching the key code.
  */
-const waitForKeyPress = (keyCode: number): T.Effect<T.NoEnv, never, void> =>
-  T.async<never, void>((r) => {
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.keyCode === keyCode) {
-        document.removeEventListener("keyup", onKeyUp);
-        r(E.right(undefined));
-      }
-    };
-
-    document.addEventListener("keyup", onKeyUp);
-
-    return (cb) => {
-      document.removeEventListener("keyup", onKeyUp);
-      cb();
-    };
-  });
+const waitForKeyPress = (keyCode: number) => pipe(
+  subscribe('keyup'),
+  S.filter(event => event.keyCode === keyCode),
+  S.takeWhile(constant(false)),
+  S.drain
+)
 
 const clicker = pipe(
   subscribe("click"),
@@ -205,7 +231,8 @@ const drawCirclesOnClick = pipe(
   S.encaseEffect,
   // Flat map the 1 element stream containing the canvas element to a stream of mouse clicks
   S.chain((canvasEl) =>
-    encaseObservable(fromEvent<MouseEvent>(canvasEl, "click"), constVoid)
+    // encaseObservable(fromEvent<MouseEvent>(canvasEl, "click"), constVoid)
+    subscribe("click", canvasEl)
   ),
   // Take mouse clicks until the user presses d or D
   takeUntil(waitForKeyPress(68)),
@@ -249,10 +276,7 @@ const programA = Do(T.effect)
   .bindL(
     "x",
     flow(dot("fiber"), (fiber) =>
-      pipe(
-        drawCirclesOnClick,
-        T.onInterrupted(fiber.interrupt)
-      )
+      pipe(drawCirclesOnClick, T.onInterrupted(fiber.interrupt))
     )
   )
   .return(dot("x"));
@@ -338,7 +362,7 @@ function App() {
 
         pipe(
           program,
-          T.provideS(documentEmitterLive),
+          T.provideS(emitterLive),
           T.provideS({ [canvasUri]: ctx }),
           provideConsole,
           T.run
