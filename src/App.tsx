@@ -1,8 +1,9 @@
-import { effect as T, stream as S, ref as R } from "@matechs/effect";
+import { effect as T, stream as S, managed as M } from "@matechs/effect";
 import { log, Console, provideConsole } from "@matechs/console";
 import * as E from "fp-ts/lib/Either";
 import * as Rnd from "fp-ts/lib/Random";
 import * as D from "fp-ts/lib/Date";
+import * as R from "fp-ts/lib/Reader";
 import * as O from "fp-ts/lib/Option";
 import * as IO from "fp-ts/lib/IO";
 
@@ -27,7 +28,10 @@ const tuple = <T extends any[]>(...ts: T) => ts;
  * @param until The effect that will terminate the stream
  * @param stream The stream
  */
-function takeUntil_<R1, E1, R2, E2, A>(stream: S.Stream<R1, E1, A>, until: T.Effect<R2, E2, any>) {
+function takeUntil_<R1, E1, R2, E2, A>(
+  stream: S.Stream<R1, E1, A>,
+  until: T.Effect<R2, E2, any>
+) {
   type Wrapped = { type: "until" } | { type: "stream"; value: A };
 
   const wrappedUntil = S.as<Wrapped>({ type: "until" })(S.encaseEffect(until));
@@ -38,15 +42,24 @@ function takeUntil_<R1, E1, R2, E2, A>(stream: S.Stream<R1, E1, A>, until: T.Eff
   );
 
   return pipe(
-    S.mergeAll([wrappedUntil as any, wrappedStream as any] as S.Stream<R1 & R2, E1 | E2, Wrapped>[]),
+    S.mergeAll([wrappedUntil as any, wrappedStream as any] as S.Stream<
+      R1 & R2,
+      E1 | E2,
+      Wrapped
+    >[]),
     S.takeWhile((wrapped) => wrapped.type === "stream"),
-    S.filter((wrapped): wrapped is Extract<Wrapped, { type: "stream" }> => wrapped.type === "stream"),
+    S.filter(
+      (wrapped): wrapped is Extract<Wrapped, { type: "stream" }> =>
+        wrapped.type === "stream"
+    ),
     S.map((wrapped) => (wrapped as Extract<Wrapped, { type: "stream" }>).value)
   );
 }
 
 export function takeUntil<R2, E2>(until: T.Effect<R2, E2, any>) {
-  return function<R1, E1, A>(s: S.Stream<R1, E1, A>) {return  takeUntil_(s, until);}
+  return function <R1, E1, A>(s: S.Stream<R1, E1, A>) {
+    return takeUntil_(s, until);
+  };
 }
 
 function fromIO<T>(io: IO<T>) {
@@ -55,14 +68,57 @@ function fromIO<T>(io: IO<T>) {
 
 // Emitter
 
-const emitterURI = Symbol()
+const emitterURI = Symbol();
 
 interface Emitter {
   [emitterURI]: {
-    addEventListener: (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => T.Effect<T.NoEnv, never, void>;
-    removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => T.Effect<T.NoEnv, never, void>;
-  }
+    fromEvent: <TEventType extends string>(
+      type: TEventType
+    ) => (
+      cb: (evt: TEventType extends "click" ? MouseEvent : Event) => void
+    ) => T.Effect<T.NoEnv, never, void>;
+  };
 }
+
+// Events
+export function subscribe<TEventType extends string>(type: TEventType) {
+  return S.fromSource(
+    M.managed.chain(
+      M.bracket(
+        T.accessM((_: Emitter) =>
+          T.sync(() => {
+            const { next, ops, hasCB } = S.su.queueUtils<
+              never,
+              TEventType extends "click" ? MouseEvent : Event
+            >();
+
+            return {
+              unsubscribe: _[emitterURI].fromEvent(type)((a) =>
+                next({ _tag: "offer", a })
+              ),
+              ops,
+              hasCB,
+            };
+          })
+        ),
+        dot("unsubscribe")
+      ),
+      ({ ops, hasCB }) => S.su.emitter(ops, hasCB)
+    )
+  );
+}
+
+const documentEmitterLive: Emitter = {
+  [emitterURI]: {
+    fromEvent: <TEventType extends string>(type: TEventType) => (
+      cb: (evt: TEventType extends "click" ? MouseEvent : Event) => void
+    ) => {
+      document.addEventListener(type, cb as any);
+
+      return T.sync(() => document.removeEventListener(type, cb as any));
+    },
+  },
+};
 
 // Canvas
 const canvasUri = Symbol();
@@ -73,22 +129,32 @@ interface Canvas {
 
 /**
  * circle :: number -> number -> number -> Effect Canvas never (number, number, number)
- * 
+ *
  * Draws a circle on the canvas. X, y, and radius are returned again.
  */
-const circle = (x: number, y: number, r: number) =>
+const circle = (x: number, y: number, r: number, sa?: number, ea?: number) =>
   T.accessM((_: Canvas) =>
-    T.sync(() => {
-      _[canvasUri].beginPath();
-      _[canvasUri].arc(x, y, r, 0, Math.PI * 2);
-      _[canvasUri].stroke();
-      return tuple(x, y, r);
-    })
+    pipe(
+      T.zip(
+        sa ? T.pure(sa) : fromIO(Rnd.randomInt(0, 360)),
+        ea
+          ? T.pure(ea)
+          : fromIO(Rnd.randomInt((Math.PI / 10) * 1000, Math.PI * 1000))
+      ),
+      T.chain(([sa, ea]) =>
+        T.sync(() => {
+          _[canvasUri].beginPath();
+          _[canvasUri].arc(x, y, r, sa, ea / 1000);
+          _[canvasUri].stroke();
+          return tuple(x, y, r, sa, ea);
+        })
+      )
+    )
   );
 
 /**
  * clear :: T.Effect Canvas never void
- * 
+ *
  * Clears a canvas
  */
 const clear = T.accessM((_: Canvas) =>
@@ -104,7 +170,7 @@ const clear = T.accessM((_: Canvas) =>
 
 /**
  * waitForKeyPress :: number -> Effect NoEnv never void
- * 
+ *
  * Given a keyCode returns an effect that resolves once the user
  * presses a key on the keyboard matching the key code.
  */
@@ -125,10 +191,17 @@ const waitForKeyPress = (keyCode: number): T.Effect<T.NoEnv, never, void> =>
     };
   });
 
+const clicker = pipe(
+  subscribe("click"),
+  S.chain(pipe(R.ask<MouseEvent>(), R.map(log), R.map(S.encaseEffect))),
+  S.drain,
+  T.fork
+);
+
 const drawCirclesOnClick = pipe(
   // Read canvas element from environment
   T.accessM((_: Canvas) => T.pure(_[canvasUri].canvas)),
-  // Turn it into a  stream
+  // Turn it into a stream
   S.encaseEffect,
   // Flat map the 1 element stream containing the canvas element to a stream of mouse clicks
   S.chain((canvasEl) =>
@@ -154,14 +227,14 @@ const drawCirclesOnClick = pipe(
   ),
   // Turn the stream producing x, y, and radius into
   // a stream producing x, y, radius, and the timestamp the circle was drawn
-  S.chain(([x, y, r]) =>
+  S.chain(([x, y, r, sa, ea]) =>
     S.encaseEffect(
       fromIO(
         pipe(
           // Get the timestamp
           D.now, // IO<number>
           // Map it to a tuple of x, y, radius, and date
-          IO.map((date) => tuple(x, y, r, date))
+          IO.map((date) => tuple(x, y, r, sa, ea, date))
         )
       )
     )
@@ -171,39 +244,60 @@ const drawCirclesOnClick = pipe(
   T.chain((output) => T.as(log("Done drawing!"), output))
 );
 
-const programC = Do(T.effect)
-  // Let the user draw circles until they press d or D
-  .bind("circles", drawCirclesOnClick)
-  // Wait for the user to press r or R (replay)
-  .do(waitForKeyPress(82))
-  .do(log("Replaying.."))
-  // Clear the canvas
-  .do(clear)
-  .doL(
-    // Flat map the list of circle coordinates and dates to
-    // a program that redraws the circles in the same amount of time
-    flow(dot("circles"), (circles) =>
-      circles
-        .reduce((acc, next, index) => {
-          // Determin the number of milliseconds the program should
-          // delay drawing the next circle based on the previous
-          // circle's timestamp.
-          const prev = circles[index - 1];
-          const ms = prev ? next[3] - prev[3] : 0;
-          
-          // Create an effect that redraws the circle after a delay
-          acc.push(T.delay(circle(next[0], next[1], next[2]), ms));
-          return acc;
-        }, [] as Array<ReturnType<typeof circle>>)
-        // Turn the list of effects into a single chained effect (andThen)
-        .reduce((a, b) =>
-          pipe(
-            a,
-            T.chain(() => b)
-          )
-        )
+const programA = Do(T.effect)
+  .bind("fiber", clicker)
+  .bindL(
+    "x",
+    flow(dot("fiber"), (fiber) =>
+      pipe(
+        drawCirclesOnClick,
+        T.onInterrupted(fiber.interrupt)
+      )
     )
   )
+  .return(dot("x"));
+
+const programC = Do(T.effect)
+  // Let the user draw circles until they press d or D
+  .bind("circles", programA)
+  .letL(
+    "proggy",
+    flow(dot("circles"), (circles) =>
+      Do(T.effect)
+        // Wait for the user to press r or R (replay)
+        .do(waitForKeyPress(82))
+        .do(log("Replaying.."))
+        // Clear the canvas
+        .do(clear)
+        .do(
+          // Flat map the list of circle coordinates and dates to
+          // a program that redraws the circles in the same amount of time
+          circles
+            .reduce((acc, next, index) => {
+              // Determin the number of milliseconds the program should
+              // delay drawing the next circle based on the previous
+              // circle's timestamp.
+              const prev = circles[index - 1];
+              const ms = prev ? next[3] - prev[3] : 0;
+
+              // Create an effect that redraws the circle after a delay
+              acc.push(
+                T.delay(circle(next[0], next[1], next[2], next[3], next[4]), ms)
+              );
+              return acc;
+            }, [] as Array<ReturnType<typeof circle>>)
+            // Turn the list of effects into a single chained effect (andThen)
+            .reduce((a, b) =>
+              pipe(
+                a,
+                T.chain(() => b)
+              )
+            )
+        )
+        .done()
+    )
+  )
+  .doL(flow(dot("proggy"), (proggy) => pipe(proggy, T.forever)))
   .done();
 
 function App() {
@@ -227,7 +321,9 @@ function App() {
       const ctx = ref.current.getContext("2d");
 
       if (ctx) {
-        const program: T.Effect<Canvas & Console, never, void> = Do(T.effect)
+        const program: T.Effect<Canvas & Console & Emitter, never, void> = Do(
+          T.effect
+        )
           // Spawn a program that allows the user to draw circles and replay their drawing
           .bind("fiber", T.fork(programC))
           // Wait for the user to press x or X to cancel
@@ -240,7 +336,13 @@ function App() {
           .doL(() => program)
           .return(constVoid);
 
-        pipe(program, T.provideS({ [canvasUri]: ctx }), provideConsole, T.run);
+        pipe(
+          program,
+          T.provideS(documentEmitterLive),
+          T.provideS({ [canvasUri]: ctx }),
+          provideConsole,
+          T.run
+        );
       }
     }
   }, []);
