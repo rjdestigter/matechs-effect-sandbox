@@ -14,7 +14,7 @@
 importScripts("https://storage.googleapis.com/workbox-cdn/releases/4.3.1/workbox-sw.js");
 
 importScripts(
-  "/matechs-effect-sandbox/precache-manifest.bc62a6999721db5fb0536fcb510fa360.js"
+  "/matechs-effect-sandbox/precache-manifest.465c7dfe0d97ee7d29f5a7443fbcbb3f.js"
 );
 
 self.addEventListener('message', (event) => {
