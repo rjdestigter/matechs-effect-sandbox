@@ -1,0 +1,1 @@
+export const charCodeAt = (at: number) => (str: string) => str.charCodeAt(at)

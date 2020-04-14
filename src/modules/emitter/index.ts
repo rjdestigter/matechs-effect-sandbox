@@ -1,7 +1,7 @@
 import { effect as T, stream as S, managed as M } from "@matechs/effect";
 import { pipe } from "fp-ts/lib/pipeable";
-import { constant } from "fp-ts/lib/function";
 import { dot } from "../../utils/getter";
+import { log } from "@matechs/console";
 
 export const uri = "@uri/emitter";
 
@@ -98,10 +98,13 @@ export const makeEmitterLive = <
  * Given a keyCode returns an effect that resolves once the user
  * presses a key on the keyboard matching the key code.
  */
-export const waitForKeyPress = (keyCode: number) =>
-  pipe(
-    subscribe("keyup"),
-    S.filter((event) => event.keyCode === keyCode),
-    S.takeWhile(constant(false)),
-    S.drain
+export const waitForKeyPress = (...keyCodes: number[]) =>
+  T.effect.chain(log("Waiting for ", ...keyCodes), () =>
+    pipe(
+      subscribe("keyup"),
+      S.filter((event) => keyCodes.includes(event.keyCode)),
+      S.take(1),
+      S.collectArray,
+      T.map(([evt]) => evt)
+    )
   );

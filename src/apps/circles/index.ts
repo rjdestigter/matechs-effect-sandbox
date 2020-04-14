@@ -1,13 +1,12 @@
 import * as React from "react";
 
-import { effect as T, stream as S } from "@matechs/effect";
-import { log, Console, provideConsole } from "@matechs/console";
+import { effect as T, stream as S, ref } from "@matechs/effect";
+import { provideConsole } from "@matechs/console";
 import * as Rnd from "fp-ts/lib/Random";
-import * as D from "fp-ts/lib/Date";
-import * as IO from "fp-ts/lib/IO";
+import * as A from "fp-ts/lib/Array";
 
 import { pipe } from "fp-ts/lib/pipeable";
-import { constVoid, flow } from "fp-ts/lib/function";
+import { flow, identity } from "fp-ts/lib/function";
 import { Do } from "fp-ts-contrib/lib/Do";
 import { dot } from "../../utils/getter";
 
@@ -15,11 +14,7 @@ import * as Canvas from "../../modules/canvas";
 import * as Emitter from "../../modules/emitter";
 import { fromIO, takeUntil } from "../../utils/effect";
 import { tuple } from "../../utils/tuple";
-
-/**
- * Type alias for IO
- */
-type IO<A> = IO.IO<A>;
+import { charCodeAt } from "../../utils/string";
 
 type X = number;
 type Y = number;
@@ -34,40 +29,20 @@ type TimeStamped = [X, Y, Radius, StartAngle, EndAngle, TimeStamp];
 
 /**
  * ```hs
- * drawCircle :: (number, number) -> Stream Canvas never Circle
+ * randomCircle :: (number, number) -> Stream Canvas never Circle
  * ```
  *
  * Draws a circle with a random radius
  */
-const drawCircle = ([x, y]: [number, number]) =>
+const randomCircle = ([x, y]: [X, Y]) =>
   pipe(
     // Get a random radius for the circle to draw
     Rnd.randomInt(30, 200),
     // Convert IO to Effect
     fromIO,
     // Map effect that produces a random int to an effect that draws a circle
-    T.chain((r) => Canvas.circle(x, y, r)),
+    T.chain((r) => Canvas.circle(x, y, r))
     // Turn the effect into a stream
-    S.encaseEffect
-  );
-
-/**
- * ```hs
- * circleToTimeStamped :: Circle -> Stream NoEnv never TimeStamped
- * ```
- *
- * Draws a circle with a random radius
- */
-const circleToTimeStamped = ([x, y, r, sa, ea]: Circle) =>
-  S.encaseEffect(
-    fromIO(
-      pipe(
-        // Get a timestamp using fp-ts' Date library
-        D.now, // IO<number>
-        // Map it to a tuple of x, y, radius, and date
-        IO.map((date) => tuple(x, y, r, sa, ea, date))
-      )
-    )
   );
 
 /**
@@ -77,6 +52,32 @@ const circleToTimeStamped = ([x, y, r, sa, ea]: Circle) =>
  */
 const mapMouseEventToCoords = (e: MouseEvent) => tuple(e.offsetX, e.offsetY);
 
+const makeOnClick = (
+  makeEffect: ([x, y]: [X, Y]) => T.Effect<
+    Canvas.Canvas,
+    never,
+    Canvas.Instruction[]
+  >
+) =>
+  pipe(
+    // Read canvas element from environment
+    T.accessM((_: Canvas.Canvas) => _[Canvas.uri].canvas),
+    // Turn it into a stream
+    S.encaseEffect,
+    // Flat map the 1 element stream containing the canvas element to a stream of mouse clicks
+    S.chain((canvasEl) =>
+      // encaseObservable(fromEvent<MouseEvent>(canvasEl, "click"), constVoid)
+      Emitter.subscribe("click", canvasEl)
+    ),
+    //   // Take mouse clicks until the user presses d or D
+    //   takeUntil(Emitter.waitForKeyPress(68)),
+    // Map the mouse event to it's coordinates
+    S.map(mapMouseEventToCoords),
+    // Flat map the stream of coordinates to
+    // a stream that draws a circle
+    S.chain(flow(makeEffect, S.encaseEffect))
+  );
+
 /**
  * ```hs
  * drawCirclesOnClick :: Effect (Console & Canvas & Emitter) never [TimeStamped]
@@ -84,115 +85,126 @@ const mapMouseEventToCoords = (e: MouseEvent) => tuple(e.offsetX, e.offsetY);
  *
  * Draw a circle on every mouseclick until the program is terminated by pressing 'd' or 'D'
  */
-const drawCirclesOnClick = pipe(
-  // Read canvas element from environment
-  T.accessM((_: Canvas.Canvas) => _[Canvas.uri].canvas),
-  // Turn it into a stream
-  S.encaseEffect,
-  // Flat map the 1 element stream containing the canvas element to a stream of mouse clicks
-  S.chain((canvasEl) =>
-    // encaseObservable(fromEvent<MouseEvent>(canvasEl, "click"), constVoid)
-    Emitter.subscribe("click", canvasEl)
-  ),
-  // Take mouse clicks until the user presses d or D
-  takeUntil(Emitter.waitForKeyPress(68)),
-  // Map the mouse event to it's coordinates
-  S.map(mapMouseEventToCoords),
-  // Flat map the stream of coordinates to
-  // a stream that draws a circle
-  S.chain(drawCircle),
-  // Turn the stream producing x, y, and radius into
-  // a stream producing x, y, radius, and the timestamp the circle was drawn
-  S.chain(circleToTimeStamped),
-  // Turn stream into an effect of an array of values
-  S.collectArray,
-  T.chain((output) => T.as(log("Done drawing!"), output))
+const drawCirclesOnClick = makeOnClick(randomCircle);
+
+const marker = ([x, y]: [number, number]) =>
+  T.accessM((_: Canvas.Canvas) => {
+    const ctx = _[Canvas.uri];
+
+    return pipe(
+      [
+        ctx.beginPath,
+        ctx.arc(x, y, 20, 0, Math.PI * 2),
+        ctx.strokeStyle("#000000"),
+        ctx.fillStyle("Yellow"),
+        ctx.lineWidth(2),
+        ctx.stroke,
+        ctx.fill,
+      ],
+      A.array.sequence(T.effect)
+    );
+  });
+
+const drawMarkerOnClick = makeOnClick(marker);
+
+const makeWaitForMenuChoice = (menuCodes: number[]) =>
+  pipe(
+    Emitter.subscribe("keyup"),
+    S.map(dot("keyCode")),
+    S.filter(menuCodes.includes.bind(menuCodes)),
+    S.take(1),
+    S.collectArray,
+    T.map(([keyCode]) => keyCode),
+    T.map(String.fromCharCode)
+  );
+
+const waitForMainMenuChoice = pipe(
+  ["1", "2", "R", "X"],
+  A.map(charCodeAt(0)),
+  makeWaitForMenuChoice
 );
 
-/**
- * ```hs
- * circles2effects :: [TimeStamped] -> Effect Canvas never any
- * ```
- *
- * Fold a list of timestamped circles into a single effect that draws them to canvas.
- *
- */
-const circles2effects = (timestampedCircles: TimeStamped[]) =>
-  timestampedCircles
-    .reduce((acc, next, index) => {
-      // DeterminE the number of milliseconds the program should
-      // delay drawing the next circle based on the previous
-      // circle's timestamp.
-      const prev = timestampedCircles[index - 1];
-      const ms = prev ? (next[5] - prev[5]) / 2 : 0;
+const waitForToolMenuChoice = pipe(
+  ["S", "X"],
+  A.map(charCodeAt(0)),
+  makeWaitForMenuChoice
+);
 
-      // Create an effect that redraws the circle after a delay
-      acc.push(
-        T.delay(Canvas.circle(next[0], next[1], next[2], next[3], next[4]), ms)
-      );
-      return acc;
-    }, [] as Array<ReturnType<typeof Canvas.circle>>)
-    // Turn the list of effects into a single chained effect (andThen)
-    .reduce((a, b) =>
+const makeDoUntilMenuChoice = <R, E, A>(
+  effect: S.Stream<R, E, Canvas.Instruction[]>
+) =>
+  pipe(
+    // Run 2 effects in parallell
+    T.parZip(
+      // One that runs the effect until a menu choice (S or X) is pressed
       pipe(
-        a,
-        T.chain(() => b)
-      )
-    );
+        effect,
+        takeUntil(waitForToolMenuChoice),
+        S.collectArray,
+        T.map(A.chain(identity))
+      ),
+      // And second the menu choice itself
+      waitForToolMenuChoice
+    ),
+    // If the menu choice was X return an empty list of instructions otherwise return instructions.
+    T.map(([instructions, code]) => (code === "S" ? instructions : []))
+  );
 
 /**
- * ```hs
- * redrawCircles :: [TimeStamped] -> Effect (Emitter & Console & Canvas) never void
- * ```
+ * Main program
  */
-const redrawCircles = (circles: TimeStamped[]) => {
-  const redraw = Do(T.effect)
-    // Wait for the user to press r or R (replay)
-    // .do(Emitter.waitForKeyPress(82))
-    .do(log("Replaying..."))
-    // Clear the canvas
-    .do(Canvas.clear)
-    .do(
-      // Flat map the list of circle coordinates and dates to
-      // a program that redraws the circles in the same amount of time
-      circles2effects(circles)
-    )
-    .do(T.never)
-    .return(constVoid);
-
-    return T.zip(
-        Emitter.waitForKeyPress(82),
-        T.forever(T.race(Emitter.waitForKeyPress(82), redraw))
-    )
-    
-};
-
-const drawAndRedraw = Do(T.effect)
-  // Let the user draw circles until they press d or D
-  .bind("circles", drawCirclesOnClick)
-  .doL(
-    flow(dot("circles"), (circles) =>
-      redrawCircles(circles)
+const main = Do(T.effect)
+  // Create a ref that stores canvas drawings as serializable instructions.
+  .bind(
+    "stateRef",
+    ref.makeRef({
+      instructions: [] as Canvas.Instruction[],
+    })
+  )
+  .doL(({ stateRef }) =>
+    // Use the ref in a program that runs forever.,
+    T.forever(
+      Do(T.effect)
+        // Clear the canvas on every run.
+        .do(Canvas.clear)
+        // Convert the instructions in state to effects that draw onto the canvas.
+        .do(
+          pipe(
+            stateRef.get,
+            T.chain((state) => Canvas.parseInstructions(state.instructions))
+          )
+        )
+        // Wait for the user to make a choice (1, 2, or X)
+        .bind("mainMenuChoice", waitForMainMenuChoice)
+        // Allow the user to draw on canvas or clear it if the choice was X
+        .bindL("additionalInstructions", ({ mainMenuChoice }) => {
+          switch (mainMenuChoice) {
+            case "1":
+              return makeDoUntilMenuChoice(drawCirclesOnClick);
+            case "2":
+              return makeDoUntilMenuChoice(drawMarkerOnClick);
+            case "X":
+              // Empty the instructions in state
+              return T.as(
+                stateRef.update(() => ({ instructions: [] })),
+                []
+              );
+            default:
+              return T.pure([]);
+          }
+        })
+        // Update state and add the new set of instructions to the current set
+        .doL(({ additionalInstructions }) =>
+          stateRef.update((current) => {
+            return {
+              instructions: current.instructions.concat(additionalInstructions),
+            };
+          })
+        )
+        .done()
     )
   )
   .done();
-
-export const main: T.Effect<
-  Canvas.Canvas & Console & Emitter.Emitter,
-  never,
-  void
-> = Do(T.effect)
-  // Spawn a program that allows the user to draw circles and replay their drawing
-  .bind("fiber", T.fork(drawAndRedraw))
-  // Wait for the user to press x or X to cancel
-  .do(Emitter.waitForKeyPress(88))
-  // Interrupt the fiber
-  .doL(({ fiber }) => fiber.interrupt)
-  // Clear the canvas
-  .do(Canvas.clear)
-  // Reboot
-  .doL(() => main)
-  .return(constVoid);
 
 export const useCircles = (
   canvasRef: React.MutableRefObject<HTMLCanvasElement | null>
@@ -203,9 +215,13 @@ export const useCircles = (
 
       if (ctx) {
         pipe(
+          // Run the main program
           main,
+          // Provide Emitter which adds support for listening to mouse clicks and keyboard presses
           T.provideS(Emitter.makeEmitterLive(document)),
+          // Provide the canvas 2d context
           T.provideS(Canvas.makeCanvasLive(ctx)),
+          // Provide console logging capabilities
           provideConsole,
           T.run
         );

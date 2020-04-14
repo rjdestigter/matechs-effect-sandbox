@@ -40,25 +40,25 @@ function App() {
       <footer>
         <ul>
           <li>
-            Click anywhere on the canvas to draw a circle with a random.
+            Press <strong>1</strong> to enter "circles" mode. Once in this mode you can click anywhere to draw a random circle.
+            <ul>
+              <li>
+                Press <strong>S</strong> or <strong>X</strong> to cancel. You will be taken back to main mode.
+              </li>
+            </ul>
           </li>
           <li>
-            Press <i>x</i> to reset.
+            Press <strong>2</strong> to enter "markers" mode. Once in this mode you can click anywhere to draw a yellow marker.
+            <ul>
+              <li>
+                Press <strong>S</strong> or <strong>X</strong> to cancel. You will be taken back to main mode.
+              </li>
+            </ul>
           </li>
           <li>
-            Press <i>d</i> to commit.
-          </li>
-          <li>
-            Press <i>r</i> to replay <i>(after commiting.)</i>.
-          </li>
-          <li>
-            Press <i>r</i> again while replaying to cancel and restart.
+            Press <strong>X</strong> while in <i>main</i> mode to clear the canvas.
           </li>
         </ul>
-        <p>
-          You can redraw as many times as you want once a drawing has been comitted. Size and
-          coordinates are preserved. Colours are not. Redrawing happens at twice.          
-        </p>
         <p>
           Circles have a random radius, start angle, end angle, color and border color.
         </p>
