@@ -43,7 +43,7 @@ function App() {
             Press <strong>1</strong> to enter "circles" mode. Once in this mode you can click anywhere to draw a random circle.
             <ul>
               <li>
-                Press <strong>S</strong> or <strong>X</strong> to cancel. You will be taken back to main mode.
+                Press <strong>S</strong> to save or <strong>X</strong> to cancel. You will be taken back to main mode.
               </li>
             </ul>
           </li>
@@ -51,7 +51,15 @@ function App() {
             Press <strong>2</strong> to enter "markers" mode. Once in this mode you can click anywhere to draw a yellow marker.
             <ul>
               <li>
-                Press <strong>S</strong> or <strong>X</strong> to cancel. You will be taken back to main mode.
+                Press <strong>S</strong> to save or <strong>X</strong> to cancel. You will be taken back to main mode.
+              </li>
+            </ul>
+          </li>
+          <li>
+            Press <strong>3</strong> to enter "polygon" mode. Once in this mode you can click anywhere to draw a polygon.
+            <ul>
+              <li>
+                Press <strong>S</strong> to save or <strong>X</strong> to cancel. You will be taken back to main mode.
               </li>
             </ul>
           </li>

@@ -4,9 +4,10 @@ import { effect as T, stream as S, ref } from "@matechs/effect";
 import { provideConsole } from "@matechs/console";
 import * as Rnd from "fp-ts/lib/Random";
 import * as A from "fp-ts/lib/Array";
+import * as O from "fp-ts/lib/Option";
 
 import { pipe } from "fp-ts/lib/pipeable";
-import { flow, identity } from "fp-ts/lib/function";
+import { flow, identity, constant } from "fp-ts/lib/function";
 import { Do } from "fp-ts-contrib/lib/Do";
 import { dot } from "../../utils/getter";
 
@@ -41,23 +42,19 @@ const randomCircle = ([x, y]: [X, Y]) =>
     // Convert IO to Effect
     fromIO,
     // Map effect that produces a random int to an effect that draws a circle
-    T.chain((r) => Canvas.circle(x, y, r))
-    // Turn the effect into a stream
+    T.chain((r) => Canvas.circle(x, y, r)),
+    T.map((instructions) => Canvas.group(instructions))
   );
 
 /**
  * ```hs
- * mapMouseEventToCoords :: MouseEvent -> (X, Y
+ * mapMouseEventToCoord :: MouseEvent -> (X, Y
  * ```
  */
-const mapMouseEventToCoords = (e: MouseEvent) => tuple(e.offsetX, e.offsetY);
+const mapMouseEventToCoord = (e: MouseEvent) => tuple(e.offsetX, e.offsetY);
 
-const makeOnClick = (
-  makeEffect: ([x, y]: [X, Y]) => T.Effect<
-    Canvas.Canvas,
-    never,
-    Canvas.Instruction[]
-  >
+const makeOnClick = <R, E, A>(
+  makeEffect: ([x, y]: [X, Y]) => T.Effect<R, E, A>
 ) =>
   pipe(
     // Read canvas element from environment
@@ -72,7 +69,7 @@ const makeOnClick = (
     //   // Take mouse clicks until the user presses d or D
     //   takeUntil(Emitter.waitForKeyPress(68)),
     // Map the mouse event to it's coordinates
-    S.map(mapMouseEventToCoords),
+    S.map(mapMouseEventToCoord),
     // Flat map the stream of coordinates to
     // a stream that draws a circle
     S.chain(flow(makeEffect, S.encaseEffect))
@@ -87,25 +84,165 @@ const makeOnClick = (
  */
 const drawCirclesOnClick = makeOnClick(randomCircle);
 
+/**
+ * Draw a marker
+ */
 const marker = ([x, y]: [number, number]) =>
-  T.accessM((_: Canvas.Canvas) => {
-    const ctx = _[Canvas.uri];
-
-    return pipe(
+  Canvas.accessContext((ctx) =>
+    pipe(
       [
         ctx.beginPath,
-        ctx.arc(x, y, 20, 0, Math.PI * 2),
+        ctx.arc(x, y, 3, 0, Math.PI * 2),
         ctx.strokeStyle("#000000"),
-        ctx.fillStyle("Yellow"),
+        ctx.fillStyle("#ffffff"),
         ctx.lineWidth(2),
         ctx.stroke,
         ctx.fill,
       ],
-      A.array.sequence(T.effect)
-    );
-  });
+      A.array.sequence(T.effect),
+      T.map(Canvas.group)
+    )
+  );
 
 const drawMarkerOnClick = makeOnClick(marker);
+
+/**
+ * Take one element from a stream and return it as an effect.
+ */
+const takeOne = <R, E, A>(stream: S.Stream<R, E, A>) =>
+  pipe(
+    stream,
+    S.take(1),
+    S.collectArray,
+    T.map(([a]) => a)
+  );
+
+const polygonCoordinates2Effect = ([h, ...t]: [number, number][]) =>
+  pipe(
+    A.array.sequence(T.effect)(
+      pipe([
+        Canvas.beginPath,
+        Canvas.lineWidth(1),
+        Canvas.accessContext(ctx => ctx.strokeStyle('#000')),
+        // Move the cursor the head of the set of coordinates.
+        Canvas.moveTo(h),
+        // From there draw a line to every next coordinate
+        ...t.map(Canvas.lineTo),
+        Canvas.closePath,
+        Canvas.stroke,
+        // Draw a marker for the head position
+        marker(h),
+        // And every other.
+        ...t.map(marker),
+      ])
+    ),
+    T.map(Canvas.group)
+  );
+
+/**
+ * Let the user draw a polygon.
+ * @param onState The current state of the canvas. This is needed to redraw it on every mouse move.
+ */
+const drawPolygon = (currentState: Canvas.Instruction[]) => {
+  // Effect that will restore the canvas to it's original
+  const restoreCanvas = pipe(
+    currentState,
+    A.map(Canvas.parseInstruction),
+    A.array.sequence(T.effect)
+  );
+
+  return pipe(
+    // Create a ref to store the coordinates of the new polygon in.
+
+    ref.makeRef({
+      coords: [] as [number, number][],
+      instructionGroup: O.none as O.Option<Canvas.InstructionGroup>,
+    }),
+    S.encaseEffect,
+    S.chain((polygonRef) =>
+      //   T.zip(
+      pipe(
+        // Wait for the user to assign the first coordinate by clicking on the canvas.
+        takeOne(Emitter.subscribe("click")),
+        T.map(mapMouseEventToCoord),
+        // Store the first coordinate using the reference
+        T.chain((coord) =>
+          polygonRef.set({ coords: [coord], instructionGroup: O.none })
+        ),
+        // Continue as a stream
+        S.encaseEffect,
+        S.chain(
+          constant(
+            pipe(
+              // Race between mousemove and click
+              T.race(
+                takeOne(Emitter.subscribe("click")),
+                takeOne(Emitter.subscribe("mousemove"))
+              ),
+              // Chain mousevent to drawing the polygon
+              T.chain((event) =>
+                pipe(
+                  event,
+                  mapMouseEventToCoord,
+                  (coord) =>
+                    event.type === "click"
+                    // If click won the race, update the reference with the new coordinate
+                      ? pipe(
+                          polygonRef.update(({ coords, instructionGroup }) => ({
+                            coords: [...coords, coord],
+                            instructionGroup,
+                          })),
+                          // Retain the set of coordinates from the update
+                          T.map(dot("coords"))
+                        )
+                        // If mousemove won the race, get the coordiantes from the reference
+                        // and concat the "move" coordinate.
+                      : pipe(
+                          polygonRef.get,
+                          T.map(({ coords }) => [...coords, coord])
+                        ),
+                        // Retain the coordinates to be drawn with the event type
+                  T.map((coords) => tuple(event.type, coords))
+                )
+              ),
+              T.chain(([eventType, coords]) =>
+                Do(T.effect)
+                // Clear the canvas
+                  .do(Canvas.clear)
+                  // Restore what was already previously drawn
+                  .do(restoreCanvas)
+                  // Draw the polygon and stream the instructions
+                  .bind(
+                    "polygonInstructions",
+                    polygonCoordinates2Effect(coords)
+                  )
+                  // Update the reference to the instructions
+                  .doL(({ polygonInstructions }) =>
+                    eventType === "click" && coords.length > 2
+                      ? polygonRef.update(({ coords, instructionGroup }) => ({
+                          coords,
+                          instructionGroup: O.some(polygonInstructions),
+                        }))
+                      : T.pure(1)
+                  )
+                  .done()
+              ),
+              S.encaseEffect,
+              // Rinse and repeat the race
+              S.repeat,
+            )
+          )
+        ),
+        // The stream output is the instruction group collected on the reference
+        S.chain(constant(pipe(
+            polygonRef.get,
+            T.map(dot('instructionGroup')),
+            S.encaseEffect
+        ))),
+      )
+    )
+  );
+};
 
 const makeWaitForMenuChoice = (menuCodes: number[]) =>
   pipe(
@@ -119,7 +256,7 @@ const makeWaitForMenuChoice = (menuCodes: number[]) =>
   );
 
 const waitForMainMenuChoice = pipe(
-  ["1", "2", "R", "X"],
+  ["1", "2", "3", "R", "X"],
   A.map(charCodeAt(0)),
   makeWaitForMenuChoice
 );
@@ -131,24 +268,23 @@ const waitForToolMenuChoice = pipe(
 );
 
 const makeDoUntilMenuChoice = <R, E, A>(
-  effect: S.Stream<R, E, Canvas.Instruction[]>
-) =>
+  effect: S.Stream<R, E, A>
+): T.Effect<R & Emitter.Emitter, E, O.Option<A[]>> =>
   pipe(
     // Run 2 effects in parallell
     T.parZip(
       // One that runs the effect until a menu choice (S or X) is pressed
-      pipe(
-        effect,
-        takeUntil(waitForToolMenuChoice),
-        S.collectArray,
-        T.map(A.chain(identity))
-      ),
+      pipe(effect, takeUntil(waitForToolMenuChoice), S.collectArray),
       // And second the menu choice itself
       waitForToolMenuChoice
     ),
     // If the menu choice was X return an empty list of instructions otherwise return instructions.
-    T.map(([instructions, code]) => (code === "S" ? instructions : []))
+    T.map(([instructions, code]) =>
+      code === "S" ? O.some(instructions) : O.none
+    )
   );
+
+type EffectOf<T> = T extends T.Effect<any, any, infer A> ? A : never;
 
 /**
  * Main program
@@ -179,28 +315,71 @@ const main = Do(T.effect)
         // Allow the user to draw on canvas or clear it if the choice was X
         .bindL("additionalInstructions", ({ mainMenuChoice }) => {
           switch (mainMenuChoice) {
-            case "1":
-              return makeDoUntilMenuChoice(drawCirclesOnClick);
-            case "2":
-              return makeDoUntilMenuChoice(drawMarkerOnClick);
-            case "X":
+            case "1": {
+              const program = makeDoUntilMenuChoice(drawCirclesOnClick);
+              return program;
+            }
+            case "2": {
+              const program = makeDoUntilMenuChoice(drawMarkerOnClick);
+              return program;
+            }
+            case "3": {
+              const program = pipe(
+                // Let the user draw a polygon until they press S or X (to cancel)
+                makeDoUntilMenuChoice(
+                  pipe(
+                    stateRef.get,
+                    T.map(dot("instructions")),
+                    S.encaseEffect,
+                    S.chain(drawPolygon),
+                  )
+                ),
+                // makeDoUntilMenuChoice returns an option to indicate cancellation
+                T.map(option => pipe(
+                    option,
+                    // drawPolygon also returns an option and is a stream (array) of options
+                    O.chain(suboptions => pipe(
+                        suboptions,
+                        // We only want the last polygon since that was the final version
+                        A.reverse,
+                        ([h]) => h,
+                    )),
+                    // Put it back into an array (the other 2 programs emit arrays)
+                    O.map(A.of)
+                )),
+              );
+
+              return program;
+            }
+            case "X": {
               // Empty the instructions in state
               return T.as(
                 stateRef.update(() => ({ instructions: [] })),
-                []
+                O.none as O.Option<Canvas.InstructionGroup[]>
               );
+            }
             default:
-              return T.pure([]);
+              return T.pure(O.none as O.Option<Canvas.InstructionGroup[]>);
           }
         })
         // Update state and add the new set of instructions to the current set
-        .doL(({ additionalInstructions }) =>
-          stateRef.update((current) => {
-            return {
-              instructions: current.instructions.concat(additionalInstructions),
-            };
-          })
-        )
+        .doL(({ additionalInstructions }) => {
+          console.log(additionalInstructions);
+          return pipe(
+            additionalInstructions,
+            O.map((instructions) =>
+              T.as(
+                stateRef.update((current) => {
+                  return {
+                    instructions: [...current.instructions, ...instructions],
+                  };
+                }),
+                1
+              )
+            ),
+            O.fold(constant(T.pure(1)), identity)
+          );
+        })
         .done()
     )
   )
@@ -217,6 +396,7 @@ export const useCircles = (
         pipe(
           // Run the main program
           main,
+          //   T.forever,
           // Provide Emitter which adds support for listening to mouse clicks and keyboard presses
           T.provideS(Emitter.makeEmitterLive(document)),
           // Provide the canvas 2d context

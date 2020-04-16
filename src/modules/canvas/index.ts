@@ -27,12 +27,27 @@ type ClearRect = {
   args: [number, number, number, number];
 };
 
+type LineTo = {
+  type: "@instruction/lineTo";
+  args: [number, number];
+};
+
+type MoveTo = {
+  type: "@instruction/moveTo";
+  args: [number, number];
+};
+
 type BeginPath = { type: "@instruction/beginPath" };
+type ClosePath = { type: "@instruction/closePath" };
 type Stroke = { type: "@instruction/stroke" };
 type Fill = { type: "@instruction/fill" };
+type Save = { type: "@instruction/save" };
+type Restore = { type: "@instruction/restore" };
 type LineWidth = { type: "@instruction/lineWidth"; args: [number] };
 type StrokeStyle = { type: "@instruction/strokeStyle"; args: [string] };
 type FillStyle = { type: "@instruction/fillStyle"; args: [string] };
+
+export type InstructionGroup = { type: '@instruction-group', instructions: Instruction[] }
 
 export type Instruction =
   | Arc
@@ -42,13 +57,23 @@ export type Instruction =
   | Fill
   | LineWidth
   | StrokeStyle
-  | FillStyle;
+  | FillStyle
+  | MoveTo
+  | ClosePath
+  | LineTo
+  | Save
+  | Restore
+  | InstructionGroup
 
 export type Tagged<T> = { type: "@tag"; instructions: Instruction[]; data: T };
 
 export const tag = (instructions: Instruction[]) => <T>(
   data: T
 ): Tagged<T> => ({ type: "@tag", instructions, data });
+
+export const group = (instructions: Instruction[]): InstructionGroup => ({
+    type: '@instruction-group', instructions
+})
 
 export interface Canvas {
   [uri]: {
@@ -67,9 +92,20 @@ export interface Canvas {
       endAngle: Radian,
       anticlockwise?: boolean | undefined
     ) => T.UIO<Instruction>;
+    lineTo: (
+      x: number,
+      y: number,
+    ) => T.UIO<Instruction>;
+    moveTo: (
+      x: number,
+      y: number,
+    ) => T.UIO<Instruction>;
     lineWidth: (width: number) => T.UIO<Instruction>;
     beginPath: T.UIO<Instruction>;
+    closePath: T.UIO<Instruction>;
     stroke: T.UIO<Instruction>;
+    save: T.UIO<Instruction>;
+    restore: T.UIO<Instruction>;
     fill: T.UIO<Instruction>;
     strokeStyle: (color: string) => T.UIO<Instruction>;
     fillStyle: (color: string) => T.UIO<Instruction>;
@@ -165,11 +201,32 @@ export const parseInstruction = (instruction: Instruction) =>
     const ctx = _[uri];
 
     switch (instruction.type) {
+       case "@instruction-group": {
+        return pipe(
+            parseInstructions(instruction.instructions),
+            T.map(group)
+        )
+       }
       case "@instruction/arc": {
         return ctx.arc(...instruction.args);
       }
+      case "@instruction/lineTo": {
+        return ctx.lineTo(...instruction.args);
+      }
+      case "@instruction/moveTo": {
+        return ctx.moveTo(...instruction.args);
+      }
+      case "@instruction/save": {
+        return ctx.save;
+      }
+      case "@instruction/restore": {
+        return ctx.restore;
+      }
       case "@instruction/beginPath": {
         return ctx.beginPath;
+      }
+      case "@instruction/closePath": {
+        return ctx.closePath;
       }
       case "@instruction/clearRect": {
         return ctx.clearRect(...instruction.args);
@@ -219,14 +276,52 @@ export const makeCanvasLive = (ctx: CanvasRenderingContext2D): Canvas => {
             args: [x, y, radius, startAngle, endAngle, anticlockwise],
           }
         ),
+      lineTo: (
+        x: number,
+        y: number,
+      ) =>
+        T.as(
+          T.sync(() =>
+            ctx.lineTo(x, y)
+          ),
+          {
+            type: "@instruction/lineTo",
+            args: [x, y],
+          }
+        ),
+      moveTo: (
+        x: number,
+        y: number,
+      ) =>
+        T.as(
+          T.sync(() =>
+            ctx.moveTo(x, y)
+          ),
+          {
+            type: "@instruction/moveTo",
+            args: [x, y],
+          }
+        ),
       clearRect: makeClearRectLive(ctx),
       beginPath: T.as(
         T.sync(() => ctx.beginPath()),
         { type: "@instruction/beginPath" }
       ),
+      closePath: T.as(
+        T.sync(() => ctx.closePath()),
+        { type: "@instruction/closePath" }
+      ),
       stroke: T.as(
         T.sync(() => ctx.stroke()),
         { type: "@instruction/stroke" }
+      ),
+      save: T.as(
+        T.sync(() => ctx.save()),
+        { type: "@instruction/save" }
+      ),
+      restore: T.as(
+        T.sync(() => ctx.restore()),
+        { type: "@instruction/restore" }
       ),
       fill: T.as(
         T.sync(() => ctx.fill()),
@@ -256,3 +351,29 @@ export const makeCanvasLive = (ctx: CanvasRenderingContext2D): Canvas => {
     },
   };
 };
+
+export const moveTo = ([x, y]: [number, number]) => T.accessM(
+    (_: Canvas) => _[uri].moveTo(x, y)
+)
+
+export const lineTo = ([x, y]: [number, number]) => T.accessM(
+    (_: Canvas) => _[uri].lineTo(x, y)
+)
+
+export const lineWidth = (width: number) => T.accessM(
+    (_: Canvas) => _[uri].lineWidth(width)
+)
+
+export const beginPath = T.accessM(
+    (_: Canvas) => _[uri].beginPath
+)
+
+export const closePath = T.accessM(
+    (_: Canvas) => _[uri].closePath
+)
+
+export const stroke = T.accessM(
+    (_: Canvas) => _[uri].stroke
+)
+
+export const accessContext = <R, E, A>(f: (ctx: Canvas[typeof uri]) => T.Effect<Canvas & R, E, A>) => T.accessM((_: Canvas) => f(_[uri]))

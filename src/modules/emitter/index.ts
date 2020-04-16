@@ -10,7 +10,7 @@ type EventFor<TEventType extends string> = TEventType extends
   | "keyup"
   | "keydown"
   ? KeyboardEvent
-  : TEventType extends "click" | "dblclick"
+  : TEventType extends "click" | "dblclick" | "mousemove"
   ? MouseEvent
   : Event;
 

@@ -5,9 +5,9 @@
   "repository": "http://rjdestigter.github.io/matechs-effect-sandbox",
   "homepage": "http://rjdestigter.github.io/matechs-effect-sandbox",
   "dependencies": {
-    "@matechs/console": "^3.0.31",
-    "@matechs/effect": "^5.0.26",
-    "@matechs/rxjs": "^3.0.26",
+    "@matechs/console": "^3.0.33",
+    "@matechs/effect": "^5.0.29",
+    "@matechs/rxjs": "^3.0.29",
     "@testing-library/jest-dom": "^5.5.0",
     "@testing-library/react": "^10.0.2",
     "@testing-library/user-event": "^10.0.1",
