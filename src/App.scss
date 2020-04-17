@@ -24,19 +24,17 @@ body,
     >footer {
       flex: 0 0 auto;
       padding: 15px;
-      color: #fff;
-      background: #000;
+      background: rgb(178, 150, 255);
       box-sizing: border-box;
-      font-size: 0.8em;
 
-      ul {
-        padding-left: 15px;
-        margin-bottom: 15px;
+      display: flex;
+
+      >.left {
+        flex: 1 1 auto;
       }
 
-      p {
-        font-size: 0.9em;
-        margin-bottom: 15px;
+      >.right {
+        flex: 0 0 auto;
       }
     }
   }

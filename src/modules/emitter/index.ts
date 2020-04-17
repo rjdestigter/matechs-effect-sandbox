@@ -2,19 +2,20 @@ import { effect as T, stream as S, managed as M } from "@matechs/effect";
 import { pipe } from "fp-ts/lib/pipeable";
 import { dot } from "../../utils/getter";
 import { log } from "@matechs/console";
+import { identity } from "fp-ts/lib/function";
 
 export const uri = "@uri/emitter";
 
-type EventFor<TEventType extends string> = TEventType extends
+export type EventFor<TEventType extends string> = TEventType extends
   | "keypress"
   | "keyup"
   | "keydown"
   ? KeyboardEvent
-  : TEventType extends "click" | "dblclick" | "mousemove"
+  : TEventType extends "click" | "dblclick" | "mousemove" | "mousedown" | "mouseup"
   ? MouseEvent
   : Event;
 
-type EventHandler<TEventType extends string> = (
+export type EventHandler<TEventType extends string> = (
   evt: EventFor<TEventType>
 ) => void;
 
@@ -23,8 +24,8 @@ export interface Emitter {
     fromEvent: <TEventType extends string>(
       type: TEventType
     ) => (cb: EventHandler<TEventType>) => T.Effect<T.NoEnv, never, void>;
-    addEventListener: <THTMLElement extends HTMLElement>(
-      el: THTMLElement
+    addEventListener: <TElement extends Element>(
+      el: TElement
     ) => <TEventType extends string>(
       type: TEventType
     ) => (cb: EventHandler<TEventType>) => T.Effect<T.NoEnv, never, void>;
@@ -32,12 +33,10 @@ export interface Emitter {
 }
 
 // Events
-export const subscribe = <
-  TEventType extends string,
-  THTMLElement extends HTMLElement
+export const subscribe = <TEventType extends string>(type: TEventType, ret?: any) => <
+  TElement extends Element
 >(
-  type: TEventType,
-  el?: THTMLElement
+  el?: TElement
 ) => {
   return S.fromSource(
     M.managed.chain(
@@ -52,9 +51,12 @@ export const subscribe = <
             const fn = el ? _[uri].addEventListener(el) : _[uri].fromEvent;
 
             return {
-              unsubscribe: fn(type)((a) => next({ _tag: "offer", a })),
+              unsubscribe: fn(type)(a => {
+                next({ _tag: "offer", a })
+                return ret
+              }),
               ops,
-              hasCB,
+              hasCB
             };
           })
         ),
@@ -66,7 +68,7 @@ export const subscribe = <
 };
 
 export const makeEmitterLive = <
-  TRoot extends Pick<HTMLElement, "addEventListener" | "removeEventListener">
+  TRoot extends Pick<Element, "addEventListener" | "removeEventListener">
 >(
   rootEl: TRoot
 ): Emitter => {
@@ -75,20 +77,28 @@ export const makeEmitterLive = <
       fromEvent: <TEventType extends string>(type: TEventType) => (
         cb: EventHandler<TEventType>
       ) => {
-        rootEl.addEventListener(type, cb as any);
+        const wrappedCb = (e: EventFor<TEventType>) => {
+          e.stopPropagation();
+          return cb(e);
+        };
+        rootEl.addEventListener(type, wrappedCb as any);
 
         return T.sync(() => rootEl.removeEventListener(type, cb as any));
       },
-      addEventListener: <THTMLElement extends HTMLElement>(
-        el: THTMLElement
-      ) => <TEventType extends string>(type: TEventType) => (
-        cb: EventHandler<TEventType>
-      ) => {
-        el.addEventListener(type, cb as any);
+      addEventListener: <TElement extends Element>(el: TElement) => <
+        TEventType extends string
+      >(
+        type: TEventType
+      ) => (cb: EventHandler<TEventType>) => {
+        const wrappedCb = (e: EventFor<TEventType>) => {
+          e.stopPropagation();
+          return cb(e);
+        };
+        el.addEventListener(type, wrappedCb as any);
 
         return T.sync(() => el.removeEventListener(type, cb as any));
-      },
-    },
+      }
+    }
   };
 };
 
@@ -101,8 +111,8 @@ export const makeEmitterLive = <
 export const waitForKeyPress = (...keyCodes: number[]) =>
   T.effect.chain(log("Waiting for ", ...keyCodes), () =>
     pipe(
-      subscribe("keyup"),
-      S.filter((event) => keyCodes.includes(event.keyCode)),
+      subscribe("keyup")(),
+      S.filter(event => keyCodes.includes(event.keyCode)),
       S.take(1),
       S.collectArray,
       T.map(([evt]) => evt)

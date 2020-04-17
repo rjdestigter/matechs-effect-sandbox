@@ -1,75 +1,115 @@
-import { effect as T } from "@matechs/effect";
+import { effect as T, stream as S } from "@matechs/effect";
 import * as O from "fp-ts/lib/Option";
 import { pipe } from "fp-ts/lib/pipeable";
-import { constant } from "fp-ts/lib/function";
-import { dot } from "../../utils/getter";
-import { Do } from "fp-ts-contrib/lib/Do";
+import { constant, flow, identity } from "fp-ts/lib/function";
+import { subscribe, Emitter, EventFor } from "../emitter";
 
+/**
+ * Document
+ */
+export const documentUri = '@uri/document'
+
+export type DocumentEnv = { [documentUri]: Document }
+
+export const getDocument = T.accessM(flow((_: DocumentEnv) => _[documentUri], T.pure))
+
+export const mapDocument = <R, E, A>(f: (doc: Document) => T.Effect<R, E, A>) => pipe(
+  getDocument,
+  T.map(f)
+)
+
+/**
+ * QuerySelector
+ */
 interface QuerySelector {
   <K extends keyof HTMLElementTagNameMap>(selectors: K): <
     TNode extends ParentNode
   >(
     node: TNode
-  ) => T.UIO<O.Option<HTMLElementTagNameMap[K]>>;
+  ) => O.Option<HTMLElementTagNameMap[K]>;
   <K extends keyof SVGElementTagNameMap>(selectors: K): <
     TNode extends ParentNode
   >(
     node: TNode
-  ) => T.UIO<O.Option<SVGElementTagNameMap[K]>>;
+  ) => O.Option<SVGElementTagNameMap[K]>;
   <E extends Element = Element>(selectors: string): <TNode extends ParentNode>(
     node: TNode
-  ) => T.UIO<O.Option<E>>;
+  ) => O.Option<E>;
 }
 
 interface QuerySelectorT {
   <K extends keyof HTMLElementTagNameMap>(selectors: K): <
     TNode extends ParentNode
   >(
-    node: T.UIO<O.Option<TNode>>
-  ) => T.UIO<O.Option<HTMLElementTagNameMap[K]>>;
+    node: O.Option<TNode>
+  ) => O.Option<HTMLElementTagNameMap[K]>;
   <K extends keyof SVGElementTagNameMap>(selectors: K): <
     TNode extends ParentNode
   >(
-    node: T.UIO<O.Option<TNode>>
-  ) => T.UIO<O.Option<SVGElementTagNameMap[K]>>;
+    node: O.Option<TNode>
+  ) => O.Option<SVGElementTagNameMap[K]>;
   <E extends Element = Element>(selectors: string): <TNode extends ParentNode>(
-    node: T.UIO<O.Option<TNode>>
-  ) => T.UIO<O.Option<E>>;
+    node: O.Option<TNode>
+  ) => O.Option<E>
 }
 
 export const querySelector: QuerySelector = (selectors: string) => <
   TNode extends ParentNode
 >(
   el: TNode
-) => T.sync(() => O.fromNullable(el.querySelector(selectors)));
+) => O.fromNullable(el.querySelector(selectors));
 
-export const querySelectorT: QuerySelectorT = (selectors: string) => <
+export const querySelectorO: QuerySelectorT = (selectors: string) => <
   TNode extends ParentNode
 >(
-  nodeT: T.UIO<O.Option<TNode>>
+  nodeOT: O.Option<TNode>
 ) =>
-  pipe(
-    nodeT,
-    T.chain((nodeOption) =>
-      pipe(
-        nodeOption,
-        O.fold(constant(T.pure(O.none)), (el) => querySelector(selectors)(el))
-      )
-    )
-  );
+pipe(
+  nodeOT,
+  O.map((el) => querySelector(selectors)(el))
+)
 
-export const querySelectorT2: QuerySelectorT = (selectors: string) => <
-  TNode extends ParentNode
->(
-  nodeT: T.UIO<O.Option<TNode>>
-) =>
-  Do(T.effect)
-    .bind("node", nodeT)
-    .bindL("result", ({ node }) =>
-      pipe(
-        node,
-        O.fold(constant(T.pure(O.none)), (el) => querySelector(selectors)(el))
-      )
-    )
-    .return(dot("result"));
+/**
+ * $
+ */
+interface $ {
+    <K extends keyof HTMLElementTagNameMap>(selectors: K): T.Effect<DocumentEnv, never, O.Option<HTMLElementTagNameMap[K]>>;
+    <K extends keyof SVGElementTagNameMap>(selectors: K): T.Effect<DocumentEnv, never, O.Option<SVGElementTagNameMap[K]>>;
+    <E extends Element = Element>(selectors: string): T.Effect<DocumentEnv, never, O.Option<E>>;
+}
 
+export const $: $ = (selectors: string) => pipe(
+  getDocument,
+  T.map(querySelector(selectors))
+)
+
+/**
+ * ```hs
+ * parentElement :: Node -> Option<HTMLelement>
+ * ```
+ */
+export const parentElement = <TNode extends Node>(node: TNode) => O.fromNullable(node.parentElement)
+
+
+export class EmptyOptionOfElement extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmptyOptionOfElement";
+  }
+}
+
+export const raiseEmptyOptionOfElement = (message: string) => T.raiseError(new EmptyOptionOfElement(message))
+
+export const makeEventStream = <TEventType extends string>(eventType: TEventType) => <R, E, A extends Element>(elementT: T.Effect<R, E, O.Option<A>>) => pipe(
+  elementT,
+  T.map(elementO => pipe(
+    elementO,
+    O.map(subscribe(eventType)),
+    O.fold<S.Stream<Emitter, never, EventFor<TEventType>>, S.Stream<Emitter, EmptyOptionOfElement,  EventFor<TEventType>>>(
+      constant(S.raised(new EmptyOptionOfElement(`Option does not contain some element to create ${eventType} event stream for`))),
+      identity
+    )
+  ))
+)
+
+export const makeClickStream = makeEventStream('click')
