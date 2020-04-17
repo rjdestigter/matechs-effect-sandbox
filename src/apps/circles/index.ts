@@ -21,6 +21,7 @@ import * as addCircleBtn from "../../components/buttons/add-circles";
 import * as addMarkersBtn from "../../components/buttons/add-markers";
 import * as saveBtn from "../../components/buttons/save";
 import * as cancelBtn from "../../components/buttons/cancel";
+import * as clearBtn from "../../components/buttons/clear";
 
 import {
   $,
@@ -332,6 +333,11 @@ const waitForAddCancelButtonClick = pipe(
   T.map(_ => "X")
 );
 
+const waitForClearButtonClick = pipe(
+  takeOne(clearBtn.clicks),
+  T.map(_ => "X")
+);
+
 const waitForMainMenuChoice = pipe(
   T.race(
     pipe(
@@ -341,18 +347,22 @@ const waitForMainMenuChoice = pipe(
     ),
     T.race(
       T.race(waitForAddPolygonButtonClick, waitForCirclesButtonClick),
-      waitForAddMarkersButtonClick
+      T.race(waitForAddMarkersButtonClick, waitForClearButtonClick)
     )
   ),
   T.chain(choice =>
     T.as(
-      A.array.sequence(T.effect)([
-        addMarkersBtn.disable,
-        addPolygonBtn.disable,
-        addCircleBtn.disable,
-        saveBtn.enable,
-        cancelBtn.enable
-      ]),
+      A.array.sequence(T.effect)(
+        choice !== "X"
+          ? [
+              addMarkersBtn.disable,
+              addPolygonBtn.disable,
+              addCircleBtn.disable,
+              saveBtn.enable,
+              cancelBtn.enable
+            ]
+          : []
+      ),
       choice
     )
   )
@@ -365,13 +375,8 @@ const waitForToolMenuChoice = pipe(
   ["S", "X"],
   A.map(charCodeAt(0)),
   makeWaitForMenuChoice,
-  effect => T.race(
-    effect,
-    T.race(
-      waitForSaveButtonClick,
-      waitForAddCancelButtonClick
-    )
-  ),
+  effect =>
+    T.race(effect, T.race(waitForSaveButtonClick, waitForAddCancelButtonClick)),
   T.chain(choice =>
     T.as(
       A.array.sequence(T.effect)([
@@ -412,7 +417,11 @@ export const main = Do(T.effect)
   .bind(
     "stateRef",
     pipe(
-      T.zip(saveBtn.disable, cancelBtn.disable),
+      A.array.sequence(T.effect)([
+        saveBtn.disable,
+        cancelBtn.disable,
+        clearBtn.disable
+      ]),
       T.chain(
         constant(
           ref.makeRef({
@@ -445,6 +454,15 @@ export const main = Do(T.effect)
         // Clear the canvas on every run.
         .do(Canvas.clear)
         // Convert the instructions in state to effects that draw onto the canvas.
+        .do(
+          pipe(
+            stateRef.get,
+            T.map(flow(dot("instructions"), dot("length"), Boolean)),
+            T.chain(hasInstructions =>
+              hasInstructions ? clearBtn.enable : clearBtn.disable
+            )
+          )
+        )
         .do(
           pipe(
             stateRef.get,

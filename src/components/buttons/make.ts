@@ -11,33 +11,35 @@ import { constant, identity } from "fp-ts/lib/function";
 export default (selector: string) => {
   const element = $<HTMLButtonElement>(selector);
 
-  const clicks = pipe(element, makeClickStream, S.encaseEffect, S.chain(identity));
-
-  const disable = pipe(
+  const clicks = pipe(
     element,
-    T.chain(elementO =>
-      pipe(
-        elementO,
-        O.fold(
-          constant(raiseEmptyOptionOfElement(`Unable to disable button(${selector})`)),
-          element => T.sync(() => element.setAttribute("disabled", "true"))
-        )
-      )
-    )
+    makeClickStream,
+    S.encaseEffect,
+    S.chain(identity)
   );
 
-  const enable = pipe(
-    element,
-    T.chain(elementO =>
-      pipe(
-        elementO,
-        O.fold(
-          constant(raiseEmptyOptionOfElement(`Unable to enable button(${selector})`)),
-          element => T.sync(() => element.removeAttribute("disabled"))
+  const withButton = (error: string) => <A>(
+    cb: (btn: HTMLButtonElement) => A
+  ) =>
+    pipe(
+      element,
+      T.chain(elementO =>
+        pipe(
+          elementO,
+          O.fold(constant(raiseEmptyOptionOfElement(error)), btn =>
+            T.sync(() => cb(btn))
+          )
         )
       )
-    )
+    );
+
+  const disable = withButton(`Unable to disable button(${selector})`)(btn =>
+    btn.setAttribute("disabled", "true")
   );
 
-  return { element, clicks, disable, enable }
-}
+  const enable = withButton(`Unable to enable button(${selector})`)(btn =>
+    btn.removeAttribute("disabled")
+  );
+
+  return { element, clicks, disable, enable };
+};
