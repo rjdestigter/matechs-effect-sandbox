@@ -1,23 +1,23 @@
 self.__precacheManifest = (self.__precacheManifest || []).concat([
   {
-    "revision": "bfb2786f1a76200c6b04469b3a482ec5",
+    "revision": "5e04b1549aa2b601a600cc0a03382256",
     "url": "/matechs-effect-sandbox/index.html"
   },
   {
-    "revision": "316d444b9b89117d77fd",
+    "revision": "8eeb4a9b3845ad3c16d9",
     "url": "/matechs-effect-sandbox/static/css/main.19fac87b.chunk.css"
   },
   {
-    "revision": "b1dd55b9e532b9453ee1",
-    "url": "/matechs-effect-sandbox/static/js/2.320d13ee.chunk.js"
+    "revision": "1b0cddbb632e607fc028",
+    "url": "/matechs-effect-sandbox/static/js/2.27b3439f.chunk.js"
   },
   {
     "revision": "455f9f3ae849b1b7c9d5b5f2d351830a",
-    "url": "/matechs-effect-sandbox/static/js/2.320d13ee.chunk.js.LICENSE.txt"
+    "url": "/matechs-effect-sandbox/static/js/2.27b3439f.chunk.js.LICENSE.txt"
   },
   {
-    "revision": "316d444b9b89117d77fd",
-    "url": "/matechs-effect-sandbox/static/js/main.b0f7c748.chunk.js"
+    "revision": "8eeb4a9b3845ad3c16d9",
+    "url": "/matechs-effect-sandbox/static/js/main.f9949e6d.chunk.js"
   },
   {
     "revision": "d143c176186f21c9ca13",
