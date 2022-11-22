@@ -20,7 +20,7 @@
     "gh-pages": "^2.2.0",
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
-    "react-scripts": "3.4.1",
+    "react-scripts": "5.0.1",
     "retry-ts": "^0.1.2",
     "rxjs": "^6.5.5",
     "sass": "^1.26.3",
